@@ -22,15 +22,15 @@ fn main() {
 
     use Cli::*;
     match cli {
-        Get { key } => {
+        Get { .. } => {
             eprintln!("unimplemented");
             process::exit(1);
         }
-        Rm { key } => {
+        Rm { .. } => {
             eprintln!("unimplemented");
             process::exit(1);
         }
-        Set { key, value } => {
+        Set { .. } => {
             eprintln!("unimplemented");
             process::exit(1);
         }

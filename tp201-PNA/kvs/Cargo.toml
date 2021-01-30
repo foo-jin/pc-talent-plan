@@ -15,4 +15,3 @@ assert_cmd = "1.0"
 predicates = "1.0"
 
 [lib]
-doctest = false
