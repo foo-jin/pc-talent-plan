@@ -18,7 +18,7 @@ enum Cli {
 
 fn main() {
     let cli: Cli = Cli::parse();
-    let store = kvs::KvStore::new();
+    let store = kvs::KvStore::open("~/.data/kvs");
 
     use Cli::*;
     match cli {
