@@ -9,10 +9,14 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{self, BufReader, Seek},
+    io::{self, BufReader, Seek, Write},
     path::PathBuf,
 };
 use thiserror::Error;
+
+/// Factor by which the amount of redundant entries in the log
+/// may exceed the amount of live entries before compaction.
+const REDUNDANCY_THRESHOLD: u32 = 10;
 
 /// Convenience alias for `Result<T, KvsError>`.
 pub type Result<T> = std::result::Result<T, KvsError>;
@@ -34,8 +38,10 @@ pub enum KvsError {
 /// A key value store, backed by a Write Ahead Log.
 #[derive(Debug)]
 pub struct KvStore {
+    home_path: PathBuf,
     log: File,
     index: HashMap<String, u64>,
+    redundant: u32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -89,7 +95,12 @@ impl KvStore {
             };
         }
 
-        Ok(KvStore { log, index })
+        Ok(KvStore {
+            home_path: path,
+            log,
+            index,
+            redundant: 0,
+        })
     }
 
     /// Get the string value of a string key. If the key does not exist, return None.
@@ -118,12 +129,20 @@ impl KvStore {
     /// Return an error if the value is not written successfully.
     pub fn set(&mut self, key: String, val: String) -> Result<()> {
         let pos = self.log.seek(SeekFrom::End(0))?;
-        self.index.insert(key.clone(), pos);
+        let old = self.index.insert(key.clone(), pos);
+
         let cmd = Command {
             key,
             kind: CommandKind::Set(val),
         };
-        bincode::serialize_into(BufWriter::new(&self.log), &cmd)?;
+        bincode::serialize_into(&self.log, &cmd)?;
+
+        if old.is_some() {
+            self.redundant += 1;
+            if self.redundancy() > REDUNDANCY_THRESHOLD {
+                self.compact()?;
+            }
+        }
         Ok(())
     }
 
@@ -135,10 +154,54 @@ impl KvStore {
                     key,
                     kind: CommandKind::Rm,
                 };
-                bincode::serialize_into(BufWriter::new(&self.log), &cmd)?;
+                bincode::serialize_into(&self.log, &cmd)?;
+
+                self.redundant += 2;
+                if self.redundancy() > REDUNDANCY_THRESHOLD {
+                    self.compact()?;
+                }
+
                 Ok(())
             }
             None => return Err(KvsError::NonExistentKey(key)),
         }
+    }
+
+    fn redundancy(&self) -> u32 {
+        let divisor = u32::max(self.index.len() as u32, 1);
+        self.redundant / divisor
+    }
+
+    /// Compaction is carried out by creating a new log file,
+    /// copying all the live commands as found in the index over to the new log,
+    /// and replacing the old log with the new one.
+    fn compact(&mut self) -> Result<()> {
+        log::trace!("Start compaction, index size: {}", self.index.len());
+        let new_log = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(self.home_path.join("log.new"))?;
+
+        {
+            let mut writer = BufWriter::new(&new_log);
+            let mut index: Vec<(String, u64)> = self.index.drain().collect();
+            index.sort();
+            for (key, pos) in index {
+                self.log.seek(SeekFrom::Start(pos))?;
+                let new_pos = writer.seek(SeekFrom::Current(0))?;
+                let cmd: Command = bincode::deserialize_from(&self.log)?;
+                bincode::serialize_into(&mut writer, &cmd)?;
+                self.index.insert(key, new_pos);
+            }
+            writer.flush()?;
+        }
+
+        let from = self.home_path.join("log.new");
+        let to = self.home_path.join("log");
+        std::fs::rename(from, to)?;
+        self.log = new_log;
+        log::trace!("Compaction finished");
+        Ok(())
     }
 }
