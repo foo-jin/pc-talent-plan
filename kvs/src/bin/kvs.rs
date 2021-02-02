@@ -2,12 +2,23 @@ use std::process;
 
 use clap::Clap;
 
+const KEY_NOT_FOUND: &str = "Key not found";
+
 #[derive(Clap)]
 #[clap(name = env!("CARGO_PKG_NAME"),
 	   version = env!("CARGO_PKG_VERSION"),
 	   author = env!("CARGO_PKG_AUTHORS"),
        about = env!("CARGO_PKG_DESCRIPTION"))]
-enum Cli {
+struct Cli {
+    /// The path where the key-value store should store its data.
+    #[clap(parse(from_os_str), default_value = ".")]
+    path: std::path::PathBuf,
+    #[clap(subcommand)]
+    cmd: Command,
+}
+
+#[derive(Clap)]
+enum Command {
     /// Gets the value corresponding to <key> in the key-value store.
     Get { key: String },
     /// Removes the entry corresponding to <key> from the key-value store.
@@ -16,23 +27,30 @@ enum Cli {
     Set { key: String, value: String },
 }
 
-fn main() {
+fn main() -> kvs::Result<()> {
     let cli: Cli = Cli::parse();
-    let store = kvs::KvStore::open("~/.data/kvs");
+    let mut store = kvs::KvStore::open(cli.path)?;
 
-    use Cli::*;
-    match cli {
-        Get { .. } => {
-            eprintln!("unimplemented");
-            process::exit(1);
+    use Command::*;
+    match cli.cmd {
+        Get { key } => {
+            let msg = store.get(key)?.unwrap_or(KEY_NOT_FOUND.to_owned());
+            println!("{}", msg);
         }
-        Rm { .. } => {
-            eprintln!("unimplemented");
-            process::exit(1);
+        Rm { key } => {
+            let result = store.remove(key);
+            match result {
+                Ok(()) => (),
+                Err(kvs::KvsError::NonExistentKey(_)) => {
+                    println!("{}", KEY_NOT_FOUND);
+                    process::exit(1);
+                }
+                Err(e) => Err(e)?,
+            }
         }
-        Set { .. } => {
-            eprintln!("unimplemented");
-            process::exit(1);
+        Set { key, value } => {
+            store.set(key, value)?;
         }
-    }
+    };
+    Ok(())
 }
