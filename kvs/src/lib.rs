@@ -1,11 +1,19 @@
 #![deny(missing_docs)]
 //! A simple in-memory key-value store.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, io, path::PathBuf};
+use thiserror::Error;
 
 /// All errors that can be encountered by the KvStore.
-#[derive(Debug)]
-pub struct KvsError;
+#[derive(Error, Debug)]
+pub enum KvsError {
+    /// IO error
+    #[error("IO error")]
+    Io(#[from] io::Error),
+    /// Unknown error
+    #[error("unknown error")]
+    Unknown,
+}
 
 /// Convenience alias for results.
 pub type Result<T> = std::result::Result<T, KvsError>;
