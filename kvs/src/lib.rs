@@ -1,8 +1,9 @@
 #![deny(missing_docs)]
 //! A simple key-value store backed by a Write Ahead Log. The commands
-//! are serialized to the log using the [bincode](https://github.com/servo/bincode)
-//! format. This format was chosen because binary formats save space over
-//! textual formats, and bincode is a highly reputable crate.
+//! are serialized to the log using the
+//! [bincode](https://github.com/servo/bincode) format. This format
+//! was chosen because binary formats save space over textual formats,
+//! and bincode is a highly reputable crate.
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -100,8 +101,13 @@ impl KvStore {
         })
     }
 
-    /// Get the string value of a string key. If the key does not exist, return None.
-    /// Return an error if the value is not read successfully.
+    /// Gets the string value of a string key. Returns `None` if the
+    /// given key does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KvsError::UnexpectedCommandType` if an
+    /// unexpected command is found.
     pub fn get(&self, key: String) -> Result<Option<String>> {
         log::debug!("index: {:?}", self.index);
         match self.index.get(&key) {
@@ -119,8 +125,13 @@ impl KvStore {
         }
     }
 
-    /// Set the value of a string key to a string.
-    /// Return an error if the value is not written successfully.
+    /// Sets the value of a string key to a string. If the key already
+    /// exists, the previous value will be overwritten.
+    ///
+    /// # Errors
+    ///
+    /// Errors encountered during I/O and serialization are
+    /// propagated.
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let pos = self.log.seek(SeekFrom::End(0))?;
         let old = self.index.insert(key.clone(), pos);
@@ -137,7 +148,14 @@ impl KvStore {
         Ok(())
     }
 
-    /// Removes the value corresponding to the supplied key.
+    /// Removes a given key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KvsError::NonExistentKey` if the given key is not
+    /// found.
+    ///
+    /// Errors encountered during I/O or serialization are propagated.
     pub fn remove(&mut self, key: String) -> Result<()> {
         match self.index.remove(&key) {
             Some(_old) => {
@@ -160,9 +178,11 @@ impl KvStore {
         self.redundant / divisor
     }
 
-    /// Compaction is carried out by creating a new log file,
-    /// copying all the live commands as found in the index over to the new log,
-    /// and replacing the old log with the new one.
+    /// Clears stale entries in the log.
+    ///
+    /// Compaction is carried out by creating a new log file, copying
+    /// all the live commands as found in the index over to the new
+    /// log, and replacing the old log with the new one.
     fn compact(&mut self) -> Result<()> {
         log::trace!("Start compaction, index size: {}", self.index.len());
         let new_log = OpenOptions::new()
