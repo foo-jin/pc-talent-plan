@@ -4,12 +4,11 @@
 //! format. This format was chosen because binary formats save space over
 //! textual formats, and bincode is a highly reputable crate.
 
-use io::{BufWriter, SeekFrom};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs::{File, OpenOptions},
-    io::{self, BufReader, Seek, Write},
+    fs::{self, File, OpenOptions},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -25,14 +24,18 @@ pub type Result<T> = std::result::Result<T, KvsError>;
 #[derive(Error, Debug)]
 pub enum KvsError {
     /// IO error
-    #[error("IO error")]
+    #[error("{0}")]
     Io(#[from] io::Error),
-    /// (De)Serialize error
-    #[error("(De)Serialize error")]
+    /// Serialization error
+    #[error("{0}")]
     Serde(#[from] bincode::Error),
-    /// Indicates invocation of an command with a non-existent key.
+    /// Error on remove with a non-existent key
     #[error("No such key: `{0}`")]
     NonExistentKey(String),
+    /// Error on finding an unexpected command when retrieving a
+    /// value. This indicates a corrupted log or a program error.
+    #[error("Unexpected command type")]
+    UnexpectedCommandType,
 }
 
 /// A key value store, backed by a Write Ahead Log.
@@ -45,22 +48,17 @@ pub struct KvStore {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Command {
-    key: String,
-    kind: CommandKind,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-enum CommandKind {
-    Set(String),
-    Get,
-    Rm,
+enum Command {
+    Set { key: String, value: String },
+    Rm(String),
 }
 
 impl KvStore {
     /// Open the KvStore at the given path. Return the KvStore.
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let path = path.into();
+        fs::create_dir_all(&path)?;
+
         let log_path = path.join("log");
         let log = OpenOptions::new()
             .create(true)
@@ -79,19 +77,18 @@ impl KvStore {
             }
 
             let cmd: Command = bincode::deserialize_from(&mut reader)?;
-            use CommandKind::*;
-            match cmd.kind {
-                Set(_) => {
-                    index.insert(cmd.key, pos);
+            use Command::*;
+            match cmd {
+                Set { key, .. } => {
+                    index.insert(key, pos);
                 }
-                Rm => {
-                    if index.remove(&cmd.key).is_none() {
+                Rm(key) => {
+                    if index.remove(&key).is_none() {
                         log::warn!(
                             "Log and index out of sync: missing key in index for Rm command."
                         );
                     }
                 }
-                Get => unreachable!(),
             };
         }
 
@@ -112,13 +109,10 @@ impl KvStore {
                 let mut reader = BufReader::new(&self.log);
                 reader.seek(SeekFrom::Start(*pos))?;
                 let logged_cmd: Command = bincode::deserialize_from(reader)?;
-                use CommandKind::*;
-                match logged_cmd.kind {
-                    Set(val) => Ok(Some(val)),
-                    Get | Rm => panic!(
-							"Internal index is in an invalid state: encountered {:?} while retrieving latest Set command",
-							logged_cmd.kind
-						),
+                use Command::*;
+                match logged_cmd {
+                    Set { value, .. } => Ok(Some(value)),
+                    Rm(_) => Err(KvsError::UnexpectedCommandType),
                 }
             }
             None => Ok(None),
@@ -127,14 +121,11 @@ impl KvStore {
 
     /// Set the value of a string key to a string.
     /// Return an error if the value is not written successfully.
-    pub fn set(&mut self, key: String, val: String) -> Result<()> {
+    pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let pos = self.log.seek(SeekFrom::End(0))?;
         let old = self.index.insert(key.clone(), pos);
 
-        let cmd = Command {
-            key,
-            kind: CommandKind::Set(val),
-        };
+        let cmd = Command::Set { key, value };
         bincode::serialize_into(&self.log, &cmd)?;
 
         if old.is_some() {
@@ -150,10 +141,7 @@ impl KvStore {
     pub fn remove(&mut self, key: String) -> Result<()> {
         match self.index.remove(&key) {
             Some(_old) => {
-                let cmd = Command {
-                    key,
-                    kind: CommandKind::Rm,
-                };
+                let cmd = Command::Rm(key);
                 bincode::serialize_into(&self.log, &cmd)?;
 
                 self.redundant += 2;
@@ -199,7 +187,7 @@ impl KvStore {
 
         let from = self.home_path.join("log.new");
         let to = self.home_path.join("log");
-        std::fs::rename(from, to)?;
+        fs::rename(from, to)?;
         self.log = new_log;
         log::trace!("Compaction finished");
         Ok(())
