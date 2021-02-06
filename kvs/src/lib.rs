@@ -5,4 +5,5 @@ pub use error::{KvsError, Result};
 pub use kv::KvStore;
 
 mod error;
+mod io;
 mod kv;

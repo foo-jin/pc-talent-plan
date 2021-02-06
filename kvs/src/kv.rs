@@ -4,12 +4,15 @@
 //! was chosen because binary formats save space over textual formats,
 //! and bincode is a highly reputable crate.
 
-use crate::{KvsError, Result};
+use crate::{
+    io::{BufReaderWithPos, BufWriterWithPos},
+    KvsError, Result,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{BufReader, BufWriter, Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 
@@ -55,13 +58,12 @@ impl KvStore {
             .write(true)
             .open(log_path)?;
 
-        let mut reader = BufReader::new(&log);
+        let mut reader = BufReaderWithPos::new(&log)?;
         let mut index = HashMap::new();
         let end = reader.seek(SeekFrom::End(0))?;
         let _ = reader.seek(SeekFrom::Start(0))?;
         loop {
-            let pos = reader.seek(SeekFrom::Current(0))?;
-            if pos >= end {
+            if reader.pos() >= end {
                 break;
             }
 
@@ -69,7 +71,7 @@ impl KvStore {
             use Command::*;
             match cmd {
                 Set { key, .. } => {
-                    index.insert(key, pos);
+                    index.insert(key, reader.pos());
                 }
                 Rm { key } => {
                     if index.remove(&key).is_none() {
@@ -100,7 +102,7 @@ impl KvStore {
         log::debug!("index: {:?}", self.index);
         match self.index.get(&key) {
             Some(pos) => {
-                let mut reader = BufReader::new(&self.log);
+                let mut reader = BufReaderWithPos::new(&self.log)?;
                 reader.seek(SeekFrom::Start(*pos))?;
                 let logged_cmd: Command = bincode::deserialize_from(reader)?;
                 use Command::*;
@@ -180,7 +182,7 @@ impl KvStore {
             .open(self.home_path.join("log.new"))?;
 
         {
-            let mut writer = BufWriter::new(&new_log);
+            let mut writer = BufWriterWithPos::new(&new_log)?;
             let mut index: Vec<(String, u64)> = self.index.drain().collect();
             index.sort();
             for (key, pos) in index {
