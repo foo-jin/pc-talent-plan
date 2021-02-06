@@ -12,7 +12,10 @@ pub enum KvsError {
     Io(#[from] io::Error),
     /// Serialization error
     #[error("{0}")]
-    Serde(#[from] bincode::Error),
+    Ser(#[from] rmp_serde::encode::Error),
+    /// Deserialization error
+    #[error("{0}")]
+    Des(#[from] rmp_serde::decode::Error),
     /// Error on remove with a non-existent key
     #[error("No such key: `{0}`")]
     NonExistentKey(String),
