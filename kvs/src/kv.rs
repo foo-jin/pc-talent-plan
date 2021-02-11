@@ -188,7 +188,7 @@ impl KvStore {
 
                 Ok(())
             }
-            None => return Err(KvsError::NonExistentKey(key)),
+            None => Err(KvsError::NonExistentKey(key)),
         }
     }
 

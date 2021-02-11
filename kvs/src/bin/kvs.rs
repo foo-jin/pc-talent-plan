@@ -34,7 +34,7 @@ fn main() -> kvs::Result<()> {
     use Command::*;
     match cli.cmd {
         Get { key } => {
-            let msg = store.get(key)?.unwrap_or(KEY_NOT_FOUND.to_owned());
+            let msg = store.get(key)?.unwrap_or_else(|| KEY_NOT_FOUND.to_owned());
             println!("{}", msg);
         }
         Rm { key } => {
@@ -45,7 +45,7 @@ fn main() -> kvs::Result<()> {
                     println!("{}", KEY_NOT_FOUND);
                     process::exit(1);
                 }
-                Err(e) => Err(e)?,
+                Err(e) => return Err(e),
             }
         }
         Set { key, value } => {
