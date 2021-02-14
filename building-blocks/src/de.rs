@@ -37,30 +37,6 @@ impl<'de, R: BufRead> de::Deserializer<'de> for &mut Deserializer<R> {
         V: de::Visitor<'de>,
     {
         todo!();
-        let buf = self.read_next_item()?;
-        let rest = &buf[1..];
-        match buf[0] {
-            b'+' => visitor.visit_bytes(rest),
-            b'-' => visitor.visit_str(str::from_utf8(rest)?),
-            b':' => {
-                let int_str = str::from_utf8(rest)?;
-                let val = int_str.parse::<i64>()?;
-                visitor.visit_i64(val)
-            }
-            b'$' => match self.parse_bulk_string()? {
-                Some(bytes) => visitor.visit_bytes(bytes),
-                None => visitor.visit_none(),
-            },
-            b'*' => {
-                let len = match self.parse_len()? {
-                    Some(len) => len,
-                    None => return visitor.visit_none(),
-                };
-                for _ in 0..len {}
-                unimplemented!()
-            }
-            _ => unimplemented!(),
-        }
     }
 
     fn deserialize_str<V>(self, visitor: V) -> Result<V::Value>
@@ -147,7 +123,8 @@ impl<'de, R: BufRead> de::Deserializer<'de> for &mut Deserializer<R> {
         V: de::Visitor<'de>,
     {
         let _ = self.read_next_item()?;
-        // super scuffed string only impl
+        // super scuffed implementation that only works for 'PONG'.
+        // TODO: Fix enum deserialization
         let s = self.parse_any_str()?;
         visitor.visit_enum(s.into_deserializer())
     }
